@@ -1,6 +1,6 @@
 # NetAlertX Daily Time Record Generator
 
-Generate daily time records from NetAlertX session data.
+Generate daily time records from [NetAlertX](https://github.com/netalertx/NetAlertX) session data.
 
 ## Quickstart
 
@@ -93,3 +93,15 @@ date,time_in,time_out
 
 Days with no sessions are omitted. Blank `time_out` means device still connected.
 
+## Credits & Disclosures
+
+### Dependencies
+- [NetAlertX](https://github.com/netalertx/NetAlertX) - The powerful network security scanner providing the data.
+- [yq](https://github.com/mikefarah/yq) - Used for parsing YAML in the batch processor.
+
+### AI Disclosure
+
+This project was developed with assistance from AI models including GLM-4.7 (via [OpenCode](https://opencode.ai/)) and Google Gemini.
+
+### License
+This project is licensed under the [MIT License](LICENSE).
