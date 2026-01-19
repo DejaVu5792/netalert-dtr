@@ -1,0 +1,22 @@
+# NetAlertX DTR Batch Configuration
+# Jobs can be of type: device, owner, or group
+# See docs for optional args
+# Sample cases provided below
+
+jobs:
+  # Minimal: Uses Python script's default dates and auto-generated filename
+  - name: "iPhone X"
+    type: device
+
+  # Full: Specific dates and custom output path
+  - name: "John Doe"
+    type: owner
+    start_date: 2026-01-01
+    end_date: 2026-01-31
+    output_name: doe_january
+
+  # Group with consolidation flag
+  - name: "Workstations"
+    type: group
+    consolidate: true
+    output_name: office_dtr

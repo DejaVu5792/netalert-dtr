@@ -45,6 +45,28 @@ Generate for multiple devices with same prefix:
 uv run dtr_generator.py --device "iPhone" --consolidate --output "all_iphones.csv"
 ```
 
+### Batch Processing
+
+Process multiple jobs from a YAML configuration file:
+
+```bash
+./batch_process.sh [config.yaml] [output_dir]
+```
+
+Requires `yq` to be installed. Creates a YAML file with jobs:
+
+```yaml
+jobs:
+  - name: "iPhone X"
+    type: device
+
+  - name: "John Doe"
+    type: owner
+    start_date: 2026-01-01
+    end_date: 2026-01-31
+    output_name: doe_january
+```
+
 ## Options
 
 - `--device` - Filter by device name (partial match)
