@@ -50,30 +50,98 @@ def fetch_sessions(
     host: str, token: str, mac: str, start_date: str, end_date: str
 ) -> List[Dict]:
     """Fetch sessions for a device within date range."""
+    if not mac:
+        raise DataProcessingError("MAC address is empty")
+
+    if len(mac) < 10:
+        raise DataProcessingError(f"Invalid MAC address: '{mac}' is too short")
+
     headers = {"Authorization": f"Bearer {token}"}
+    url = f"{host}/sessions/list"
 
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-    days = (end - start).days + 1
+    params = {"mac": mac, "start_date": start_date, "end_date": end_date}
 
-    period = f"{days} days"
-    params = {"period": period}
-    response = requests.get(f"{host}/sessions/{mac}", headers=headers, params=params)
-    response.raise_for_status()
-    sessions = response.json().get("sessions", [])
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=30)
+    except requests.exceptions.Timeout:
+        raise NetworkError(
+            f"Connection timeout while fetching sessions for {mac}: API did not respond within 30 seconds"
+        )
+    except requests.exceptions.ConnectionError as e:
+        if "Connection refused" in str(e):
+            raise NetworkError(
+                f"Connection refused while fetching sessions for {mac}: API not accepting connections"
+            )
+        raise NetworkError(f"Connection error while fetching sessions for {mac}: {e}")
+    except requests.exceptions.RequestException as e:
+        raise NetworkError(f"Request failed while fetching sessions for {mac}: {e}")
 
-    filtered = []
-    for session in sessions:
-        conn_str = session.get("ses_Connection", "")
-        if conn_str and conn_str != "<missing event>":
-            try:
-                conn_time = datetime.fromisoformat(conn_str.replace("Z", "+00:00"))
-                if start_date <= conn_time.strftime("%Y-%m-%d") <= end_date:
-                    filtered.append(session)
-            except ValueError:
-                continue
+    status_code = response.status_code
 
-    return filtered
+    if status_code == 401:
+        raise APIError(
+            "Authentication failed while fetching sessions (HTTP 401). Check your NETALERTX_TOKEN"
+        )
+    elif status_code == 403:
+        raise APIError(
+            "Access forbidden while fetching sessions (HTTP 403). API token lacks required permissions"
+        )
+    elif status_code == 404:
+        raise APIError(
+            f"Sessions endpoint not found (HTTP 404): /sessions/list may not exist. Check NetAlertX API version"
+        )
+    elif status_code == 429:
+        raise APIError(
+            "Rate limit exceeded while fetching sessions (HTTP 429). Too many requests, please wait"
+        )
+    elif status_code >= 500:
+        raise APIError(
+            f"NetAlertX server error while fetching sessions (HTTP {status_code})"
+        )
+    elif status_code >= 400:
+        raise APIError(
+            f"Client error while fetching sessions (HTTP {status_code}): {response.text}"
+        )
+
+    try:
+        response_json = response.json()
+    except ValueError as e:
+        raise APIError(f"Invalid JSON response while fetching sessions: {e}")
+
+    if not isinstance(response_json, dict):
+        raise APIError(
+            "Unexpected response format while fetching sessions: expected JSON object"
+        )
+
+    if "sessions" not in response_json:
+        raise APIError(
+            "API response missing 'sessions' key while fetching sessions. API version may be incompatible"
+        )
+
+    sessions = response_json.get("sessions", [])
+
+    if not isinstance(sessions, list):
+        raise APIError(
+            "Unexpected format while fetching sessions: 'sessions' field is not a list"
+        )
+
+    return sessions
+
+
+def normalize_session_fields(session: Dict) -> Dict:
+    """Normalize session field names between API versions."""
+    normalized = session.copy()
+
+    if "ses_DateTimeConnection" in normalized and "ses_Connection" not in normalized:
+        normalized["ses_Connection"] = normalized["ses_DateTimeConnection"]
+
+    if (
+        "ses_DateTimeDisconnection" in normalized
+        and "ses_Disconnection" not in normalized
+    ):
+        normalized["ses_Disconnection"] = normalized["ses_DateTimeDisconnection"]
+
+    return normalized
 
 
 def process_sessions(sessions: List[Dict]) -> Dict[str, Tuple[str, Optional[str]]]:
@@ -166,8 +234,11 @@ def main():
     try:
         devices = fetch_devices(args.host, args.token)
         print(f"Found {len(devices)} devices")
-    except requests.RequestException as e:
+    except (NetworkError, APIError) as e:
         print(f"Error fetching devices: {e}", file=sys.stderr)
+        sys.exit(1)
+    except DTRGeneratorError as e:
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     matching_devices = find_devices(devices, args.device, args.owner, args.group)
@@ -213,9 +284,12 @@ def main():
             sessions = fetch_sessions(
                 args.host, args.token, mac, start_date_str, end_date_str
             )
-            all_sessions.extend(sessions)
+            normalized_sessions = [normalize_session_fields(s) for s in sessions]
+            all_sessions.extend(normalized_sessions)
             print(f"  Retrieved {len(sessions)} sessions")
-        except requests.RequestException as e:
+        except (NetworkError, APIError, DataProcessingError) as e:
+            print(f"Warning: Could not fetch sessions for {mac}: {e}", file=sys.stderr)
+        except DTRGeneratorError as e:
             print(f"Warning: Could not fetch sessions for {mac}: {e}", file=sys.stderr)
 
     if not all_sessions:
