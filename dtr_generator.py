@@ -17,6 +17,30 @@ NETALERTX_HOST = os.getenv("NETALERTX_HOST")
 NETALERTX_TOKEN = os.getenv("NETALERTX_TOKEN")
 
 
+class DTRGeneratorError(Exception):
+    """Base exception for DTR generator errors."""
+
+    pass
+
+
+class NetworkError(DTRGeneratorError):
+    """Network-related errors."""
+
+    pass
+
+
+class APIError(DTRGeneratorError):
+    """API-related errors."""
+
+    pass
+
+
+class DataProcessingError(DTRGeneratorError):
+    """Data processing errors."""
+
+    pass
+
+
 def fetch_devices(host: str, token: str) -> List[Dict]:
     """Fetch all devices from NetAlertX API."""
     headers = {"Authorization": f"Bearer {token}"}
@@ -132,6 +156,17 @@ def normalize_session_fields(session: Dict) -> Dict:
     """Normalize session field names between API versions."""
     normalized = session.copy()
 
+    # NetAlertX API uses sesDateTimeConnection / sesDateTimeDisconnection
+    if "sesDateTimeConnection" in normalized and "ses_Connection" not in normalized:
+        normalized["ses_Connection"] = normalized["sesDateTimeConnection"]
+
+    if (
+        "sesDateTimeDisconnection" in normalized
+        and "ses_Disconnection" not in normalized
+    ):
+        normalized["ses_Disconnection"] = normalized["sesDateTimeDisconnection"]
+
+    # Also handle alternative naming with underscores for compatibility
     if "ses_DateTimeConnection" in normalized and "ses_Connection" not in normalized:
         normalized["ses_Connection"] = normalized["ses_DateTimeConnection"]
 
@@ -142,6 +177,38 @@ def normalize_session_fields(session: Dict) -> Dict:
         normalized["ses_Disconnection"] = normalized["ses_DateTimeDisconnection"]
 
     return normalized
+
+
+def parse_datetime(dt_str: str) -> Optional[datetime]:
+    """Parse datetime string from various formats."""
+    if not dt_str or dt_str == "<missing event>":
+        return None
+
+    # Remove Z suffix and replace with timezone if present
+    dt_str = dt_str.replace("Z", "+00:00")
+
+    # Try common formats
+    formats = [
+        "%Y-%m-%d %H:%M:%S",  # "2025-08-01 10:00:00"
+        "%Y-%m-%d %H:%M",  # "2025-08-01 10:00" (NetAlertX format)
+        "%Y-%m-%dT%H:%M:%S%z",  # ISO with timezone
+        "%Y-%m-%dT%H:%M:%S",  # ISO without timezone
+        "%Y-%m-%dT%H:%M",  # ISO with minutes only
+    ]
+
+    for fmt in formats:
+        try:
+            return datetime.strptime(dt_str, fmt)
+        except ValueError:
+            continue
+
+    # Fallback to fromisoformat for ISO formats
+    try:
+        return datetime.fromisoformat(dt_str)
+    except ValueError:
+        pass
+
+    return None
 
 
 def process_sessions(sessions: List[Dict]) -> Dict[str, Tuple[str, Optional[str]]]:
@@ -155,29 +222,27 @@ def process_sessions(sessions: List[Dict]) -> Dict[str, Tuple[str, Optional[str]
         if not conn_str or conn_str == "<missing event>":
             continue
 
-        try:
-            conn_time = datetime.fromisoformat(conn_str.replace("Z", "+00:00"))
-            date = conn_time.strftime("%Y-%m-%d")
-
-            time_in = conn_time.strftime("%H:%M:%S")
-
-            if disc_str and disc_str != "<missing event>":
-                disc_time = datetime.fromisoformat(disc_str.replace("Z", "+00:00"))
-                time_out = disc_time.strftime("%H:%M:%S")
-            else:
-                time_out = None
-
-            if date not in daily_data:
-                daily_data[date] = (time_in, time_out)
-            else:
-                existing_time_in, existing_time_out = daily_data[date]
-                if time_in < existing_time_in:
-                    daily_data[date] = (time_in, existing_time_out)
-                if time_out and (not existing_time_out or time_out > existing_time_out):
-                    daily_data[date] = (daily_data[date][0], time_out)
-        except ValueError as e:
-            print(f"Warning: Could not parse session time: {e}", file=sys.stderr)
+        conn_time = parse_datetime(conn_str)
+        if conn_time is None:
+            print(
+                f"Warning: Could not parse connection time: {conn_str}", file=sys.stderr
+            )
             continue
+
+        date = conn_time.strftime("%Y-%m-%d")
+        time_in = conn_time.strftime("%H:%M:%S")
+
+        disc_time = parse_datetime(disc_str)
+        time_out = disc_time.strftime("%H:%M:%S") if disc_time else None
+
+        if date not in daily_data:
+            daily_data[date] = (time_in, time_out)
+        else:
+            existing_time_in, existing_time_out = daily_data[date]
+            if time_in < existing_time_in:
+                daily_data[date] = (time_in, existing_time_out)
+            if time_out and (not existing_time_out or time_out > existing_time_out):
+                daily_data[date] = (daily_data[date][0], time_out)
 
     return daily_data
 
