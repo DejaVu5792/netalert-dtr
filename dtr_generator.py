@@ -4,7 +4,7 @@ import argparse
 import csv
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Tuple
 
 import requests
@@ -229,10 +229,21 @@ def process_sessions(sessions: List[Dict]) -> Dict[str, Tuple[str, Optional[str]
             )
             continue
 
+        # NetAlertX returns UTC times (often as naive strings).
+        # Assume naive datetimes are in UTC and convert to local time.
+        if conn_time.tzinfo is None:
+            conn_time = conn_time.replace(tzinfo=timezone.utc)
+        conn_time = conn_time.astimezone()
+
         date = conn_time.strftime("%Y-%m-%d")
         time_in = conn_time.strftime("%H:%M:%S")
 
         disc_time = parse_datetime(disc_str)
+        if disc_time:
+            if disc_time.tzinfo is None:
+                disc_time = disc_time.replace(tzinfo=timezone.utc)
+            disc_time = disc_time.astimezone()
+
         time_out = disc_time.strftime("%H:%M:%S") if disc_time else None
 
         if date not in daily_data:
