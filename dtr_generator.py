@@ -357,8 +357,12 @@ def main():
             f"Fetching sessions for {device.get('devName', mac)} ({start_date_str} to {end_date_str})..."
         )
         try:
+            # Add 1 day to the end_date sent to NetAlertX to ensure the full end_date day is included.
+            # NetAlertX filters end_date as YYYY-MM-DD 00:00:00 (exclusive of that day's sessions).
+            api_end_date = end_date + timedelta(days=1)
+            api_end_date_str = api_end_date.strftime("%Y-%m-%d")
             sessions = fetch_sessions(
-                args.host, args.token, mac, start_date_str, end_date_str
+                args.host, args.token, mac, start_date_str, api_end_date_str
             )
             normalized_sessions = [normalize_session_fields(s) for s in sessions]
             all_sessions.extend(normalized_sessions)
@@ -374,6 +378,11 @@ def main():
     else:
         print(f"Processing {len(all_sessions)} total sessions...")
         daily_data = process_sessions(all_sessions)
+        # Filter to requested date range (inclusive) to omit any sessions from the next day (api_end_date_str)
+        daily_data = {
+            d: val for d, val in daily_data.items()
+            if start_date_str <= d <= end_date_str
+        }
 
     if args.output:
         output_path = args.output
